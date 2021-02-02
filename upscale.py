@@ -144,7 +144,8 @@ class Upscale:
         print(
             "Model{:s}: {:s}\nUpscaling...".format(
                 "s" if len(model_chain) > 1 else "",
-                ", ".join([Path(x).stem for x in model_chain]),
+                # ", ".join([Path(x).stem for x in model_chain]),
+                ", ".join([x for x in model_chain]),
             )
         )
 
