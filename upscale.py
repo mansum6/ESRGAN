@@ -1,3 +1,4 @@
+import logging
 import sys
 from collections import OrderedDict
 from enum import Enum
@@ -8,6 +9,15 @@ import cv2
 import numpy as np
 import torch
 import typer
+from rich import print
+from rich.logging import RichHandler
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TimeRemainingColumn,
+)
 
 import utils.architecture as arch
 import utils.dataops as ops
@@ -52,6 +62,7 @@ class Upscale:
     alpha_threshold: float = None
     alpha_boundary_offset: float = None
     alpha_mode: AlphaOptions = None
+    log: logging.Logger = None
 
     device: torch.device = None
     in_nc: int = None
@@ -81,6 +92,7 @@ class Upscale:
         alpha_threshold: float,
         alpha_boundary_offset: float,
         alpha_mode: AlphaOptions,
+        log: logging.Logger,
     ) -> None:
         self.model_str = model
         self.input = input
@@ -96,6 +108,7 @@ class Upscale:
         self.alpha_threshold = alpha_threshold
         self.alpha_boundary_offset = alpha_boundary_offset
         self.alpha_mode = alpha_mode
+        self.log = log
 
     def run(self) -> None:
         model_chain = (
@@ -124,13 +137,14 @@ class Upscale:
                 model_chain[idx] = check_model_path(model)
 
         if not self.input.exists():
-            print(f"Error: Folder [{self.input}] does not exist.")
+            self.log.error(f' Folder "{self.input}" does not exist.')
+            # print(f"Error: Folder [{self.input}] does not exist.")
             sys.exit(1)
         elif self.input.is_file():
-            print(f"Error: Folder [{self.input}] is a file.")
+            self.log.error(f'Error: Folder "{self.input}" is a file.')
             sys.exit(1)
         elif self.output.is_file():
-            print(f"Error: Folder [{self.output}] is a file.")
+            self.log.error(f'Error: Folder "{self.output}" is a file.')
             sys.exit(1)
         elif not self.output.exists():
             self.output.mkdir(parents=True)
@@ -142,7 +156,7 @@ class Upscale:
         self.out_nc = None
 
         print(
-            "Model{:s}: {:s}\nUpscaling...".format(
+            'Model{:s}: "{:s}"'.format(
                 "s" if len(model_chain) > 1 else "",
                 # ", ".join([Path(x).stem for x in model_chain]),
                 ", ".join([x for x in model_chain]),
@@ -157,59 +171,86 @@ class Upscale:
         # TODO: there might be a better way of doing this but it's good enough for now
         split_depths = {}
 
-        for idx, img_path in enumerate(images, 1):
-            img_input_path_rel = img_path.relative_to(input_folder)
-            output_dir = output_folder.joinpath(img_input_path_rel).parent
-            img_output_path_rel = output_dir.joinpath(f"{img_path.stem}.png")
-            output_dir.mkdir(parents=True, exist_ok=True)
-            print(f"{str(idx).zfill(len(images)-1)} {img_input_path_rel}")
-            if self.skip_existing and img_output_path_rel.is_file():
-                print(" == Already exists, skipping == ")
-                continue
-            # read image
-            img = cv2.imread(str(img_path.absolute()), cv2.IMREAD_UNCHANGED)
-            if len(img.shape) < 3:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-            # Seamless modes
-            if self.seamless == SeamlessOptions.tile:
-                img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_WRAP)
-            elif self.seamless == SeamlessOptions.mirror:
-                img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_REFLECT_101)
-            elif self.seamless == SeamlessOptions.replicate:
-                img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_REPLICATE)
-            elif self.seamless == SeamlessOptions.alpha_pad:
-                img = cv2.copyMakeBorder(
-                    img, 16, 16, 16, 16, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0]
-                )
-            final_scale: int = 1
-
-            for i, model_path in enumerate(model_chain):
-
-                img_height, img_width = img.shape[:2]
-
-                # Load the model so we can access the scale
-                self.load_model(model_path)
-
-                if self.cache_max_split_depth and len(split_depths.keys()) > 0:
-                    rlt, depth = ops.auto_split_upscale(
-                        img, self.upscale, self.last_scale, max_depth=split_depths[i]
+        # for idx, img_path in enumerate(track(images, description="Processing..."), 1):
+        with Progress(
+            # SpinnerColumn(),
+            "[progress.description]{task.description}",
+            BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            TimeRemainingColumn(),
+        ) as progress:
+            task_upscaling = progress.add_task("Upscaling", total=len(images))
+            for idx, img_path in enumerate(images, 1):
+                img_input_path_rel = img_path.relative_to(input_folder)
+                output_dir = output_folder.joinpath(img_input_path_rel).parent
+                img_output_path_rel = output_dir.joinpath(f"{img_path.stem}.png")
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if len(model_chain) == 1:
+                    self.log.info(
+                        f'Processing: {str(idx).zfill(len(str(len(images))))} - "{img_input_path_rel}"'
                     )
-                else:
-                    rlt, depth = ops.auto_split_upscale(
-                        img, self.upscale, self.last_scale
+                if self.skip_existing and img_output_path_rel.is_file():
+                    self.log.warning("Already exists, skipping")
+                    progress.advance(task_upscaling)
+                    continue
+                # read image
+                img = cv2.imread(str(img_path.absolute()), cv2.IMREAD_UNCHANGED)
+                if len(img.shape) < 3:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+                # Seamless modes
+                if self.seamless == SeamlessOptions.tile:
+                    img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_WRAP)
+                elif self.seamless == SeamlessOptions.mirror:
+                    img = cv2.copyMakeBorder(
+                        img, 16, 16, 16, 16, cv2.BORDER_REFLECT_101
                     )
-                    split_depths[i] = depth
+                elif self.seamless == SeamlessOptions.replicate:
+                    img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_REPLICATE)
+                elif self.seamless == SeamlessOptions.alpha_pad:
+                    img = cv2.copyMakeBorder(
+                        img, 16, 16, 16, 16, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0]
+                    )
+                final_scale: int = 1
 
-                final_scale *= self.last_scale
+                task_model_chain: TaskID = None
+                if len(model_chain) > 1:
+                    task_model_chain = progress.add_task(
+                        f'{str(idx).zfill(len(str(len(images))))} - "{img_input_path_rel}"',
+                        total=len(model_chain),
+                    )
+                for i, model_path in enumerate(model_chain):
 
-                # This is for model chaining
-                img = rlt.astype("uint8")
+                    img_height, img_width = img.shape[:2]
 
-            if self.seamless:
-                rlt = self.crop_seamless(rlt, final_scale)
+                    # Load the model so we can access the scale
+                    self.load_model(model_path)
 
-            cv2.imwrite(str(img_output_path_rel.absolute()), rlt)
+                    if self.cache_max_split_depth and len(split_depths.keys()) > 0:
+                        rlt, depth = ops.auto_split_upscale(
+                            img,
+                            self.upscale,
+                            self.last_scale,
+                            max_depth=split_depths[i],
+                        )
+                    else:
+                        rlt, depth = ops.auto_split_upscale(
+                            img, self.upscale, self.last_scale
+                        )
+                        split_depths[i] = depth
+
+                    final_scale *= self.last_scale
+
+                    # This is for model chaining
+                    img = rlt.astype("uint8")
+                    if len(model_chain) > 1:
+                        progress.advance(task_model_chain)
+
+                if self.seamless:
+                    rlt = self.crop_seamless(rlt, final_scale)
+
+                cv2.imwrite(str(img_output_path_rel.absolute()), rlt)
+                progress.advance(task_upscaling)
 
     # This code is a somewhat modified version of BlueAmulet's fork of ESRGAN by Xinntao
     def process(self, img: np.ndarray):
@@ -525,7 +566,20 @@ def main(
         None,
         help="Type of alpha processing to use. no_alpha = is no alpha processing. bas = is BA's difference method. alpha_separately = is upscaling the alpha channel separately (like IEU). swapping = is swapping an existing channel with the alpha channel.",
     ),
+    verbose: bool = typer.Option(
+        False,
+        help="Verbose mode",
+    ),
 ):
+
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.WARNING,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(markup=True)],
+    )
+    log = logging.getLogger("rich")
+
     upscale = Upscale(
         model=model,
         input=input,
@@ -541,6 +595,7 @@ def main(
         alpha_threshold=alpha_threshold,
         alpha_boundary_offset=alpha_boundary_offset,
         alpha_mode=alpha_mode,
+        log=log,
     )
     upscale.run()
 
