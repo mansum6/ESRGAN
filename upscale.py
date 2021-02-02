@@ -137,14 +137,13 @@ class Upscale:
                 model_chain[idx] = check_model_path(model)
 
         if not self.input.exists():
-            self.log.error(f' Folder "{self.input}" does not exist.')
-            # print(f"Error: Folder [{self.input}] does not exist.")
+            self.log.error(f'Folder "{self.input}" does not exist.')
             sys.exit(1)
         elif self.input.is_file():
-            self.log.error(f'Error: Folder "{self.input}" is a file.')
+            self.log.error(f'Folder "{self.input}" is a file.')
             sys.exit(1)
         elif self.output.is_file():
-            self.log.error(f'Error: Folder "{self.output}" is a file.')
+            self.log.error(f'Folder "{self.output}" is a file.')
             sys.exit(1)
         elif not self.output.exists():
             self.output.mkdir(parents=True)
@@ -171,7 +170,6 @@ class Upscale:
         # TODO: there might be a better way of doing this but it's good enough for now
         split_depths = {}
 
-        # for idx, img_path in enumerate(track(images, description="Processing..."), 1):
         with Progress(
             # SpinnerColumn(),
             "[progress.description]{task.description}",
@@ -529,45 +527,66 @@ app = typer.Typer()
 @app.command()
 def main(
     model: str = typer.Argument(...),
-    input: Path = typer.Option(Path("input"), help="Input folder"),
-    output: Path = typer.Option(Path("output"), help="Output folder"),
-    reverse: bool = typer.Option(False, help="Reverse Order"),
-    skip_existing: bool = typer.Option(False, help="Skip existing output files"),
+    input: Path = typer.Option(Path("input"), "--input", "-i", help="Input folder"),
+    output: Path = typer.Option(Path("output"), "--output", "-o", help="Output folder"),
+    reverse: bool = typer.Option(False, "--reverse", "-r", help="Reverse Order"),
+    skip_existing: bool = typer.Option(
+        False,
+        "--skip-existing",
+        "-se",
+        help="Skip existing output files",
+    ),
     seamless: SeamlessOptions = typer.Option(
         None,
+        "--seamless",
+        "-s",
         case_sensitive=False,
         help="Helps seamlessly upscale an image. tile = repeating along edges. mirror = reflected along edges. replicate = extended pixels along edges. alpha_pad = extended alpha border.",
     ),
-    cpu: bool = typer.Option(False, help="Use CPU instead of CUDA"),
+    cpu: bool = typer.Option(False, "--cpu", "-c", help="Use CPU instead of CUDA"),
     device_id: int = typer.Option(
-        0, help="The numerical ID of the GPU you want to use."
+        0, "--device-id", "-di", help="The numerical ID of the GPU you want to use."
     ),
     cache_max_split_depth: bool = typer.Option(
         False,
+        "--cache-max-split-depth",
+        "-cmsd",
         help="Caches the maximum recursion depth used by the split/merge function. Useful only when upscaling images of the same size.",
     ),
     binary_alpha: bool = typer.Option(
         False,
+        "--binary-alpha",
+        "-ba",
         help="Whether to use a 1 bit alpha transparency channel, Useful for PSX upscaling",
     ),
     ternary_alpha: bool = typer.Option(
         False,
+        "--ternary-alpha",
+        "-ta",
         help="Whether to use a 2 bit alpha transparency channel, Useful for PSX upscaling",
     ),
     alpha_threshold: float = typer.Option(
         0.5,
+        "--alpha-threshold",
+        "-at",
         help="Only used when binary_alpha is supplied. Defines the alpha threshold for binary transparency",
     ),
     alpha_boundary_offset: float = typer.Option(
         0.2,
+        "--alpha-boundary-offset",
+        "-abo",
         help="Only used when binary_alpha is supplied. Determines the offset boundary from the alpha threshold for half transparency.",
     ),
     alpha_mode: AlphaOptions = typer.Option(
         None,
+        "--alpha-mode",
+        "-am",
         help="Type of alpha processing to use. no_alpha = is no alpha processing. bas = is BA's difference method. alpha_separately = is upscaling the alpha channel separately (like IEU). swapping = is swapping an existing channel with the alpha channel.",
     ),
     verbose: bool = typer.Option(
         False,
+        "--verbose",
+        "-v",
         help="Verbose mode",
     ),
 ):
