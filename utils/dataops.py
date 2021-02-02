@@ -26,7 +26,14 @@ def rgba_to_bgra(image: torch.Tensor) -> torch.Tensor:
     return bgra_to_rgba(image)
 
 
-def auto_split_upscale(lr_img: np.ndarray, upscale_function, scale: int = 4, overlap: int = 32, max_depth: int = None, current_depth: int = 1):
+def auto_split_upscale(
+    lr_img: np.ndarray,
+    upscale_function,
+    scale: int = 4,
+    overlap: int = 32,
+    max_depth: int = None,
+    current_depth: int = 1,
+):
 
     # Attempt to upscale if unknown depth or if reached known max depth
     if max_depth is None or max_depth == current_depth:
@@ -35,7 +42,7 @@ def auto_split_upscale(lr_img: np.ndarray, upscale_function, scale: int = 4, ove
             return result, current_depth
         except RuntimeError as e:
             # Check to see if its actually the CUDA out of memory error
-            if 'allocate' in str(e):
+            if "allocate" in str(e):
                 # Collect garbage (clear VRAM)
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -46,21 +53,44 @@ def auto_split_upscale(lr_img: np.ndarray, upscale_function, scale: int = 4, ove
     h, w, c = lr_img.shape
 
     # Split image into 4ths
-    top_left = lr_img[:h//2 + overlap, :w//2 + overlap, :]
-    top_right = lr_img[:h//2 + overlap, w//2 - overlap:, :]
-    bottom_left = lr_img[h//2 - overlap:, :w//2 + overlap, :]
-    bottom_right = lr_img[h//2 - overlap:, w//2 - overlap:, :]
+    top_left = lr_img[: h // 2 + overlap, : w // 2 + overlap, :]
+    top_right = lr_img[: h // 2 + overlap, w // 2 - overlap :, :]
+    bottom_left = lr_img[h // 2 - overlap :, : w // 2 + overlap, :]
+    bottom_right = lr_img[h // 2 - overlap :, w // 2 - overlap :, :]
 
     # Recursively upscale the quadrants
     # After we go through the top left quadrant, we know the maximum depth and no longer need to test for out-of-memory
     top_left_rlt, depth = auto_split_upscale(
-        top_left, upscale_function, scale=scale, overlap=overlap, current_depth=current_depth+1)
+        top_left,
+        upscale_function,
+        scale=scale,
+        overlap=overlap,
+        current_depth=current_depth + 1,
+    )
     top_right_rlt, _ = auto_split_upscale(
-        top_right, upscale_function, scale=scale, overlap=overlap, max_depth=depth, current_depth=current_depth+1)
+        top_right,
+        upscale_function,
+        scale=scale,
+        overlap=overlap,
+        max_depth=depth,
+        current_depth=current_depth + 1,
+    )
     bottom_left_rlt, _ = auto_split_upscale(
-        bottom_left, upscale_function, scale=scale, overlap=overlap, max_depth=depth, current_depth=current_depth+1)
+        bottom_left,
+        upscale_function,
+        scale=scale,
+        overlap=overlap,
+        max_depth=depth,
+        current_depth=current_depth + 1,
+    )
     bottom_right_rlt, _ = auto_split_upscale(
-        bottom_right, upscale_function, scale=scale, overlap=overlap, max_depth=depth, current_depth=current_depth+1)
+        bottom_right,
+        upscale_function,
+        scale=scale,
+        overlap=overlap,
+        max_depth=depth,
+        current_depth=current_depth + 1,
+    )
 
     # Define output shape
     out_h = h * scale
@@ -70,12 +100,17 @@ def auto_split_upscale(lr_img: np.ndarray, upscale_function, scale: int = 4, ove
     output_img = np.zeros((out_h, out_w, c), np.uint8)
 
     # Fill output image with tiles, cropping out the overlaps
-    output_img[:out_h//2, :out_w//2, :] = top_left_rlt[:out_h//2, :out_w//2, :]
-    output_img[:out_h//2, -out_w//2:,
-               :] = top_right_rlt[:out_h//2, -out_w//2:, :]
-    output_img[-out_h//2:, :out_w//2,
-               :] = bottom_left_rlt[-out_h//2:, :out_w//2, :]
-    output_img[-out_h//2:, -out_w//2:,
-               :] = bottom_right_rlt[-out_h//2:, -out_w//2:, :]
+    output_img[: out_h // 2, : out_w // 2, :] = top_left_rlt[
+        : out_h // 2, : out_w // 2, :
+    ]
+    output_img[: out_h // 2, -out_w // 2 :, :] = top_right_rlt[
+        : out_h // 2, -out_w // 2 :, :
+    ]
+    output_img[-out_h // 2 :, : out_w // 2, :] = bottom_left_rlt[
+        -out_h // 2 :, : out_w // 2, :
+    ]
+    output_img[-out_h // 2 :, -out_w // 2 :, :] = bottom_right_rlt[
+        -out_h // 2 :, -out_w // 2 :, :
+    ]
 
     return output_img, depth
