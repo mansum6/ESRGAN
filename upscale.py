@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import logging
 import sys
 from collections import OrderedDict
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Union
 
 import cv2
 import numpy as np
@@ -14,7 +17,7 @@ from rich.logging import RichHandler
 from rich.progress import (
     BarColumn,
     Progress,
-    SpinnerColumn,
+    # SpinnerColumn,
     TaskID,
     TimeRemainingColumn,
 )
@@ -55,6 +58,7 @@ class Upscale:
     skip_existing: bool = None
     seamless: SeamlessOptions = None
     cpu: bool = None
+    fp16: bool = None
     # device_id: int = None
     cache_max_split_depth: bool = None
     binary_alpha: bool = None
@@ -85,6 +89,7 @@ class Upscale:
         skip_existing: bool,
         seamless: SeamlessOptions,
         cpu: bool,
+        fp16: bool,
         device_id: int,
         cache_max_split_depth: bool,
         binary_alpha: bool,
@@ -101,6 +106,7 @@ class Upscale:
         self.skip_existing = skip_existing
         self.seamless = seamless
         self.cpu = cpu
+        self.fp16 = fp16
         self.device = torch.device("cpu" if self.cpu else f"cuda:{device_id}")
         self.cache_max_split_depth = cache_max_split_depth
         self.binary_alpha = binary_alpha
@@ -109,6 +115,8 @@ class Upscale:
         self.alpha_boundary_offset = alpha_boundary_offset
         self.alpha_mode = alpha_mode
         self.log = log
+        if self.fp16:
+            torch.set_default_tensor_type(torch.HalfTensor)
 
     def run(self) -> None:
         model_chain = (
@@ -185,7 +193,7 @@ class Upscale:
                 output_dir.mkdir(parents=True, exist_ok=True)
                 if len(model_chain) == 1:
                     self.log.info(
-                        f'Processing: {str(idx).zfill(len(str(len(images))))} - "{img_input_path_rel}"'
+                        f'Processing {str(idx).zfill(len(str(len(images))))}: "{img_input_path_rel}"'
                     )
                 if self.skip_existing and img_output_path_rel.is_file():
                     self.log.warning("Already exists, skipping")
@@ -266,6 +274,8 @@ class Upscale:
         elif img.shape[2] == 4:
             img = img[:, :, [2, 1, 0, 3]]
         img = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
+        if self.fp16:
+            img = img.half()
         img_LR = img.unsqueeze(0)
         img_LR = img_LR.to(self.device)
 
@@ -406,7 +416,6 @@ class Upscale:
             self.model.eval()
             for k, v in self.model.named_parameters():
                 v.requires_grad = False
-            self.model = self.model.to(self.device)
 
     # This code is a somewhat modified version of BlueAmulet's fork of ESRGAN by Xinntao
     def upscale(self, img: np.ndarray) -> np.ndarray:
@@ -544,6 +553,12 @@ def main(
         help="Helps seamlessly upscale an image. tile = repeating along edges. mirror = reflected along edges. replicate = extended pixels along edges. alpha_pad = extended alpha border.",
     ),
     cpu: bool = typer.Option(False, "--cpu", "-c", help="Use CPU instead of CUDA"),
+    fp16: bool = typer.Option(
+        False,
+        "--floating-point-16",
+        "-fp16",
+        help="Use FloatingPoint16/Halftensor type for images.",
+    ),
     device_id: int = typer.Option(
         0, "--device-id", "-di", help="The numerical ID of the GPU you want to use."
     ),
@@ -607,6 +622,7 @@ def main(
         skip_existing=skip_existing,
         seamless=seamless,
         cpu=cpu,
+        fp16=fp16,
         device_id=device_id,
         cache_max_split_depth=cache_max_split_depth,
         binary_alpha=binary_alpha,
