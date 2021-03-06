@@ -26,16 +26,6 @@ import utils.architecture as arch
 import utils.dataops as ops
 
 
-def check_model_path(model_path: str) -> str:
-    if Path(model_path).is_file():
-        return model_path
-    elif Path("./models/").joinpath(model_path).is_file():
-        return str(Path("./models/").joinpath(model_path))
-    else:
-        print(f"Error: Model [{model_path}] does not exist.")
-        sys.exit(1)
-
-
 class SeamlessOptions(str, Enum):
     tile = "tile"
     mirror = "mirror"
@@ -116,7 +106,9 @@ class Upscale:
         self.alpha_mode = alpha_mode
         self.log = log
         if self.fp16:
-            torch.set_default_tensor_type(torch.HalfTensor)
+            torch.set_default_tensor_type(
+                torch.HalfTensor if self.cpu else torch.cuda.HalfTensor
+            )
 
     def run(self) -> None:
         model_chain = (
@@ -138,11 +130,11 @@ class Upscale:
                         if "@" in interpolation
                         else interpolation.split(":")
                     )
-                    interp_model = check_model_path(interp_model)
+                    interp_model = self.__check_model_path(interp_model)
                     interpolations[i] = f"{interp_model}@{interp_amount}"
                 model_chain[idx] = "&".join(interpolations)
             else:
-                model_chain[idx] = check_model_path(model)
+                model_chain[idx] = self.__check_model_path(model)
 
         if not self.input.exists():
             self.log.error(f'Folder "{self.input}" does not exist.')
@@ -257,6 +249,15 @@ class Upscale:
 
                 cv2.imwrite(str(img_output_path_rel.absolute()), rlt)
                 progress.advance(task_upscaling)
+
+    def __check_model_path(self, model_path: str) -> str:
+        if Path(model_path).is_file():
+            return model_path
+        elif Path("./models/").joinpath(model_path).is_file():
+            return str(Path("./models/").joinpath(model_path))
+        else:
+            self.log.error(f'Model "{model_path}" does not exist.')
+            sys.exit(1)
 
     # This code is a somewhat modified version of BlueAmulet's fork of ESRGAN by Xinntao
     def process(self, img: np.ndarray):
@@ -416,6 +417,7 @@ class Upscale:
             self.model.eval()
             for k, v in self.model.named_parameters():
                 v.requires_grad = False
+            self.model = self.model.to(self.device)
 
     # This code is a somewhat modified version of BlueAmulet's fork of ESRGAN by Xinntao
     def upscale(self, img: np.ndarray) -> np.ndarray:
@@ -511,7 +513,7 @@ class Upscale:
                     np.expand_dims(img, axis=2), (1, 1, min(self.last_in_nc, 3))
                 )
             if img.shape[2] > self.last_in_nc:  # remove extra channels
-                print("Warning: Truncating image channels")
+                self.log.warning("Truncating image channels")
                 img = img[:, :, : self.last_in_nc]
             # pad with solid alpha channel
             elif img.shape[2] == 3 and self.last_in_nc == 4:
@@ -611,6 +613,7 @@ def main(
         format="%(message)s",
         datefmt="[%X]",
         handlers=[RichHandler(markup=True)],
+        # handlers=[RichHandler(markup=True, rich_tracebacks=True)],
     )
     log = logging.getLogger("rich")
 
