@@ -87,11 +87,11 @@ class Upscale:
         alpha_threshold: float,
         alpha_boundary_offset: float,
         alpha_mode: AlphaOptions,
-        log: logging.Logger,
+        log: logging.Logger = logging.getLogger(),
     ) -> None:
         self.model_str = model
-        self.input = input
-        self.output = output
+        self.input = input.resolve()
+        self.output = output.resolve()
         self.reverse = reverse
         self.skip_existing = skip_existing
         self.seamless = seamless
@@ -148,9 +148,6 @@ class Upscale:
         elif not self.output.exists():
             self.output.mkdir(parents=True)
 
-        input_folder = self.input.resolve()
-        output_folder = self.output.resolve()
-
         self.in_nc = None
         self.out_nc = None
 
@@ -164,7 +161,7 @@ class Upscale:
 
         images: List[Path] = []
         for ext in ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "tga"]:
-            images.extend(input_folder.glob(f"**/*.{ext}"))
+            images.extend(self.input.glob(f"**/*.{ext}"))
 
         # Store the maximum split depths for each model in the chain
         # TODO: there might be a better way of doing this but it's good enough for now
@@ -179,8 +176,8 @@ class Upscale:
         ) as progress:
             task_upscaling = progress.add_task("Upscaling", total=len(images))
             for idx, img_path in enumerate(images, 1):
-                img_input_path_rel = img_path.relative_to(input_folder)
-                output_dir = output_folder.joinpath(img_input_path_rel).parent
+                img_input_path_rel = img_path.relative_to(self.input)
+                output_dir = self.output.joinpath(img_input_path_rel).parent
                 img_output_path_rel = output_dir.joinpath(f"{img_path.stem}.png")
                 output_dir.mkdir(parents=True, exist_ok=True)
                 if len(model_chain) == 1:
@@ -615,7 +612,6 @@ def main(
         handlers=[RichHandler(markup=True)],
         # handlers=[RichHandler(markup=True, rich_tracebacks=True)],
     )
-    log = logging.getLogger("rich")
 
     upscale = Upscale(
         model=model,
@@ -633,7 +629,6 @@ def main(
         alpha_threshold=alpha_threshold,
         alpha_boundary_offset=alpha_boundary_offset,
         alpha_mode=alpha_mode,
-        log=log,
     )
     upscale.run()
 
