@@ -6,7 +6,7 @@ import sys
 from collections import OrderedDict
 from enum import Enum
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 
 import cv2
 import numpy as np
@@ -46,6 +46,7 @@ class Upscale:
     output: Path = None
     reverse: bool = None
     skip_existing: bool = None
+    delete_input: bool = None
     seamless: SeamlessOptions = None
     cpu: bool = None
     fp16: bool = None
@@ -75,18 +76,19 @@ class Upscale:
         model: str,
         input: Path,
         output: Path,
-        reverse: bool,
-        skip_existing: bool,
-        seamless: SeamlessOptions,
-        cpu: bool,
-        fp16: bool,
-        device_id: int,
-        cache_max_split_depth: bool,
-        binary_alpha: bool,
-        ternary_alpha: bool,
-        alpha_threshold: float,
-        alpha_boundary_offset: float,
-        alpha_mode: AlphaOptions,
+        reverse: bool = False,
+        skip_existing: bool = False,
+        delete_input: bool = False,
+        seamless: Optional[SeamlessOptions] = None,
+        cpu: bool = False,
+        fp16: bool = False,
+        device_id: int = 0,
+        cache_max_split_depth: bool = False,
+        binary_alpha: bool = False,
+        ternary_alpha: bool = False,
+        alpha_threshold: float = 0.5,
+        alpha_boundary_offset: float = 0.2,
+        alpha_mode: Optional[AlphaOptions] = None,
         log: logging.Logger = logging.getLogger(),
     ) -> None:
         self.model_str = model
@@ -94,6 +96,7 @@ class Upscale:
         self.output = output.resolve()
         self.reverse = reverse
         self.skip_existing = skip_existing
+        self.delete_input = delete_input
         self.seamless = seamless
         self.cpu = cpu
         self.fp16 = fp16
@@ -186,6 +189,8 @@ class Upscale:
                     )
                 if self.skip_existing and img_output_path_rel.is_file():
                     self.log.warning("Already exists, skipping")
+                    if self.delete_input:
+                        img_path.unlink(missing_ok=True)
                     progress.advance(task_upscaling)
                     continue
                 # read image
@@ -245,6 +250,10 @@ class Upscale:
                     rlt = self.crop_seamless(rlt, final_scale)
 
                 cv2.imwrite(str(img_output_path_rel.absolute()), rlt)
+
+                if self.delete_input:
+                    img_path.unlink(missing_ok=True)
+
                 progress.advance(task_upscaling)
 
     def __check_model_path(self, model_path: str) -> str:
@@ -439,7 +448,7 @@ class Upscale:
         ):
 
             # Fill alpha with white and with black, remove the difference
-            if self.alpha_mode == 1:
+            if self.alpha_mode == AlphaOptions.bas:
                 img1 = np.copy(img[:, :, :3])
                 img2 = np.copy(img[:, :, :3])
                 for c in range(3):
@@ -452,7 +461,7 @@ class Upscale:
                 output = np.dstack((output1, alpha))
                 output = np.clip(output, 0, 1)
             # Upscale the alpha channel itself as its own image
-            elif self.alpha_mode == 2:
+            elif self.alpha_mode == AlphaOptions.alpha_separately:
                 img1 = np.copy(img[:, :, :3])
                 img2 = cv2.merge((img[:, :, 3], img[:, :, 3], img[:, :, 3]))
                 output1 = self.process(img1)
@@ -466,7 +475,7 @@ class Upscale:
                     )
                 )
             # Use the alpha channel like a regular channel
-            elif self.alpha_mode == 3:
+            elif self.alpha_mode == AlphaOptions.swapping:
                 img1 = cv2.merge((img[:, :, 0], img[:, :, 1], img[:, :, 2]))
                 img2 = cv2.merge((img[:, :, 1], img[:, :, 2], img[:, :, 3]))
                 output1 = self.process(img1)
@@ -544,6 +553,12 @@ def main(
         "-se",
         help="Skip existing output files",
     ),
+    delete_input: bool = typer.Option(
+        False,
+        "--delete-input",
+        "-di",
+        help="Delete input files after upscaling",
+    ),
     seamless: SeamlessOptions = typer.Option(
         None,
         "--seamless",
@@ -559,7 +574,7 @@ def main(
         help="Use FloatingPoint16/Halftensor type for images.",
     ),
     device_id: int = typer.Option(
-        0, "--device-id", "-di", help="The numerical ID of the GPU you want to use."
+        0, "--device-id", "-did", help="The numerical ID of the GPU you want to use."
     ),
     cache_max_split_depth: bool = typer.Option(
         False,
@@ -619,6 +634,7 @@ def main(
         output=output,
         reverse=reverse,
         skip_existing=skip_existing,
+        delete_input=delete_input,
         seamless=seamless,
         cpu=cpu,
         fp16=fp16,
